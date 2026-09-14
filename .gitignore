@@ -1,0 +1,6 @@
+# Archivos ejecutables
+*.exe
+
+# Directorios y artefactos de compilación
+build/
+*.o

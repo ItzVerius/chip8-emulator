@@ -1,0 +1,3 @@
+-IC:/msys64/ucrt64/include
+-IC:/msys64/ucrt64/include/SDL2
+--target=x86_64-w64-mingw32
