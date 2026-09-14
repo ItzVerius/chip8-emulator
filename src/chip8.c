@@ -2,9 +2,11 @@
  * Implementation of emulator
  */
 #include "chip8.h"
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
 
 #define INSTRUCTION_TABLE \
     X(0x0, op_0)    \
@@ -24,18 +26,20 @@
     X(0xE, op_E)    \
     X(0xF, op_F)
 
+
+
 // System representation
 struct Chip8{
-    uint8_t memory[4096];   // RAM available (4 KB)
-    uint8_t V[16];          // 8 bit general purpose registers (except VF, used as a flag by some instructions)
-    uint16_t I;             // Register for memory addresses (only 12 lower bits used)
-    uint16_t pc;            // Program counter
-    uint8_t delay_timer;    // Timer that if not 0, decrement at a 60Hz rate
-    uint8_t sound_timer;    // Timer that if not 0, decrement at a 60Hz rate
-    uint16_t stack[16];     // Stack for return adresses when calling subroutines
-    uint8_t sp;             // Stack pointer
-    uint8_t screen[64*32];  // 64 * 32 pixel screen display
-    uint8_t keypad[16];     // 4*4 keypad
+    uint8_t memory[MEMORYSIZE];   // RAM available (4 KB)
+    uint8_t V[REGCOUNT];          // 8 bit general purpose registers (except VF, used as a flag by some instructions)
+    uint16_t I;                   // Register for memory addresses (only 12 lower bits used)
+    uint16_t pc;                  // Program counter
+    uint8_t delay_timer;          // Timer that if not 0, decrement at a 60Hz rate
+    uint8_t sound_timer;          // Timer that if not 0, decrement at a 60Hz rate
+    uint16_t stack[STACKSIZE];    // Stack for return adresses when calling subroutines
+    uint8_t sp;                   // Stack pointer
+    uint8_t screen[SCREENSIZE];   // 64 * 32 pixel screen display
+    uint8_t keypad[16];           // 4*4 keypad
 };
 
 typedef void (*Chip8Instruction)(Chip8 *chip, uint16_t opcode);
@@ -45,11 +49,9 @@ INSTRUCTION_TABLE
 #undef X
 
 #define X(code, op) [code] = op,
-
 static const Chip8Instruction instruction_table[16] = {
     INSTRUCTION_TABLE
 };
-
 #undef X
 
 const uint8_t chip8_fontset[80] = {
@@ -71,6 +73,67 @@ const uint8_t chip8_fontset[80] = {
     0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
+void dump_chip_status(FILE *file, Chip8 *chip){
+    assert(file && chip);
+    fprintf(file, "\nMemory:\nReserved space 0x000 to 0x1FF:\n\n");
+    for(size_t i = 0; i < 0x200; i++){
+        // Address of start of line
+        if(i % 16 == 0) {
+			fprintf(file, "%04zX: ", i);
+		}
+
+        // Each byte
+        fprintf(file, "%02X ", chip->memory[i]);
+
+        // Newline if printed 16 bytes
+        if((i + 1) % 16 == 0) {
+			fprintf(file, "\n");
+		}
+    }
+
+    fprintf(file, "\nRest of memory 0x200 to 0xFFF:\n\n");
+    for(size_t i = 0x200; i < MEMORYSIZE; i++){
+        // Address of start of line
+        if(i % 16 == 0) {
+			fprintf(file, "%04zX: ", i);
+		}
+
+        // Each byte
+        fprintf(file, "%02X ", chip->memory[i]);
+
+        // Newline if printed 16 bytes
+        if((i + 1) % 16 == 0) {
+			fprintf(file, "\n");
+		}
+    }
+
+    fprintf(file, "\nRegister values:\n\n");
+
+    for(size_t i = 0; i < REGCOUNT; i++){
+        fprintf(file, "V%zX: %02X \t", i, chip->V[i]);
+        if((i+1) % 4 == 0){
+            fprintf(file, "\n");
+        }
+    }
+
+    fprintf(file, "\nI register: %03X\nPC: %03X\nSP: %02X\nDelay timer: %02X\nSound timer: %02X\n",
+        chip->I, chip->pc, chip->sp, chip->delay_timer, chip->sound_timer);
+
+    fprintf(file, "Stack: \n");
+    for(size_t i = 0; i < STACKSIZE; i++){
+        // Adress of start of line
+        if(i % 8 == 0){
+            fprintf(file, "%02zX: ", i);
+        }
+
+        fprintf(file, "%04X ", chip->stack[i]);
+
+        // Newline if printed 8 bytes
+        if((i+1) % 8 == 0){
+            fprintf(file, "\n");
+        }
+    }
+}
 
 Chip8* chip8_init(){
     Chip8* chip = calloc(1, sizeof(Chip8));
@@ -85,42 +148,80 @@ void chip8_destroy(Chip8 *chip) {
 }
 
 void chip8_load(Chip8 *chip, const uint8_t *program, size_t size){
-  assert(size <= (4096 - 0x200));
+  assert(size <= (4096 - 0x200) && chip);
   memcpy(&chip->memory[0x200], program, size);
 }
 
 void chip8_cycle(Chip8 *chip){
+    assert(chip);
     /* Fetch instruction from memory */
     uint16_t opcode = chip->memory[chip->pc];
     opcode = opcode << 8 | chip->memory[chip->pc + 1];
     chip->pc += 2;
     /* Execute instruction */
     uint8_t type = opcode >> 12;
-
-
+    instruction_table[type](chip, opcode);
 }
 
 /**
- * 
+ * Processing each type of instruction
  */
 
 /**
- * 0NNN / 00E0 / 00EE - System / Display / Return
+ * In case we find an unknown opcode, for debugging purposes.
+ */
+static void op_unknown(Chip8 *chip, uint16_t opcode){
+    fprintf(stderr, "\n[ERROR] Unknown opcode: 0x%04X at PC: 0x%04X\n",
+        opcode, chip->pc - 2);
+    char opt;
+    do{
+        fprintf(stderr, "Want to dump system information? [Y/N]\t");
+        scanf(" %c", &opt);
+        opt = toupper(opt);
+    }while(opt != 'Y' | opt != 'N');
+    if(opt == 'Y'){
+        char *dumpfile_name;
+        fprintf(stderr, "\nInsert name of file to dump into: (leave empty for stderr)\t");
+        scanf("%s", dumpfile_name);
+        if(strcmp(dumpfile_name, "")){
+            dump_chip_status(stderr, chip);
+        } else {
+            FILE *dumpfile = fopen(dumpfile_name, "w");
+            if (!dumpfile){
+                perror("Error creating file to dump into.");
+                return;
+            }
+            dump_chip_status(dumpfile, chip);
+        }
+    }
+}
+
+/**
+ * 00E0 / 00EE - Display / Return
  * --------------------------------------------------
- * 0NNN: SYS addr    -> Execute machine language routine at NNN (ignored)[cite: 1].
- * 00E0: CLS         -> Clear the display[cite: 1].
- * 00EE: RET         -> Return from subroutine: PC = stack[--SP][cite: 1].
+ * 00E0: CLS         -> Clear the display.
+ * 00EE: RET         -> Return from subroutine.
  */
 static void op_0(Chip8 *chip, uint16_t opcode) {
-	(void)chip;
-	(void)opcode;
-	return;
+	switch(opcode){
+	    case(0x00E0):
+			for(size_t i = 0; i < SCREENSIZE; i++){
+			    chip->screen[i] = 0;
+			};
+			break;
+		case(0x00EE):
+		    chip->pc = chip->stack[chip->sp--];
+		    break;
+		default:
+		    op_unknown(chip, opcode);
+		    break;
+	}
 }
 
 /**
  * 1NNN - JP addr
  * --------------------------------------------------
- * Jump to location NNN: PC = NNN[cite: 1]
+ * Jump to location NNN: PC = NNN
  */
 static void op_1(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -131,7 +232,7 @@ static void op_1(Chip8 *chip, uint16_t opcode) {
 /**
  * 2NNN - CALL addr
  * --------------------------------------------------
- * Call subroutine at NNN: stack[SP++] = PC; PC = NNN[cite: 1]
+ * Call subroutine at NNN
  */
 static void op_2(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -143,7 +244,6 @@ static void op_2(Chip8 *chip, uint16_t opcode) {
  * 3XNN - SE Vx, byte
  * --------------------------------------------------
  * Skip next instruction if Vx == NN:
- * if (Vx == NN) PC += 2[cite: 1]
  */
 static void op_3(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -155,7 +255,6 @@ static void op_3(Chip8 *chip, uint16_t opcode) {
  * 4XNN - SNE Vx, byte
  * --------------------------------------------------
  * Skip next instruction if Vx != NN:
- * if (Vx != NN) PC += 2[cite: 1]
  */
 static void op_4(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -167,7 +266,6 @@ static void op_4(Chip8 *chip, uint16_t opcode) {
  * 5XY0 - SE Vx, Vy
  * --------------------------------------------------
  * Skip next instruction if Vx == Vy:
- * if (Vx == Vy) PC += 2[cite: 1]
  */
 static void op_5(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -178,7 +276,7 @@ static void op_5(Chip8 *chip, uint16_t opcode) {
 /**
  * 6XNN - LD Vx, byte
  * --------------------------------------------------
- * Set Vx = NN[cite: 1]
+ * Set Vx = NN
  */
 static void op_6(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -189,8 +287,8 @@ static void op_6(Chip8 *chip, uint16_t opcode) {
 /**
  * 7XNN - ADD Vx, byte
  * --------------------------------------------------
- * Set Vx = Vx + NN (lowest 8 bits kept)[cite: 1].
- * Note: VF carry flag is NOT modified[cite: 1].
+ * Set Vx = Vx + NN (lowest 8 bits kept).
+ * Note: VF carry flag is NOT modified.
  */
 static void op_7(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -201,15 +299,15 @@ static void op_7(Chip8 *chip, uint16_t opcode) {
 /**
  * 8XYN - Arithmetic and Logical operations
  * --------------------------------------------------
- * 8XY0: LD   Vx, Vy        -> Vx = Vy[cite: 1]
- * 8XY1: OR   Vx, Vy        -> Vx = Vx | Vy[cite: 1]
- * 8XY2: AND  Vx, Vy        -> Vx = Vx & Vy[cite: 1]
- * 8XY3: XOR  Vx, Vy        -> Vx = Vx ^ Vy[cite: 1]
- * 8XY4: ADD  Vx, Vy        -> Vx = Vx + Vy; VF = carry[cite: 1]
- * 8XY5: SUB  Vx, Vy        -> Vx = Vx - Vy; VF = NOT borrow (1 if Vx > Vy, else 0)[cite: 1]
- * 8XY6: SHR  Vx {, Vy}     -> Vx = Vx >> 1; VF = least-significant bit before shift[cite: 1]
- * 8XY7: SUBN Vx, Vy        -> Vx = Vy - Vx; VF = NOT borrow (1 if Vy > Vx, else 0)[cite: 1]
- * 8XYE: SHL  Vx {, Vy}     -> Vx = Vx << 1; VF = most-significant bit before shift[cite: 1]
+ * 8XY0: LD   Vx, Vy        -> Vx = Vy
+ * 8XY1: OR   Vx, Vy        -> Vx = Vx | Vy
+ * 8XY2: AND  Vx, Vy        -> Vx = Vx & Vy
+ * 8XY3: XOR  Vx, Vy        -> Vx = Vx ^ Vy
+ * 8XY4: ADD  Vx, Vy        -> Vx = Vx + Vy; VF = carry
+ * 8XY5: SUB  Vx, Vy        -> Vx = Vx - Vy; VF = NOT borrow (1 if Vx > Vy, else 0)
+ * 8XY6: SHR  Vx {, Vy}     -> Vx = Vx >> 1; VF = least-significant bit before shift
+ * 8XY7: SUBN Vx, Vy        -> Vx = Vy - Vx; VF = NOT borrow (1 if Vy > Vx, else 0)
+ * 8XYE: SHL  Vx {, Vy}     -> Vx = Vx << 1; VF = most-significant bit before shift
  */
 static void op_8(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -221,7 +319,6 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
  * 9XY0 - SNE Vx, Vy
  * --------------------------------------------------
  * Skip next instruction if Vx != Vy:
- * if (Vx != Vy) PC += 2[cite: 1]
  */
 static void op_9(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -232,7 +329,7 @@ static void op_9(Chip8 *chip, uint16_t opcode) {
 /**
  * ANNN - LD I, addr
  * --------------------------------------------------
- * Set index register I = NNN[cite: 1]
+ * Set index register I = NNN
  */
 static void op_A(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -243,7 +340,7 @@ static void op_A(Chip8 *chip, uint16_t opcode) {
 /**
  * BNNN - JP V0, addr
  * --------------------------------------------------
- * Jump to location NNN + V0: PC = NNN + V[0][cite: 1]
+ * Jump to location NNN + V0
  */
 static void op_B(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -254,7 +351,7 @@ static void op_B(Chip8 *chip, uint16_t opcode) {
 /**
  * CXNN - RND Vx, byte
  * --------------------------------------------------
- * Set Vx = (random byte between 0 and 255) & NN[cite: 1]
+ * Set Vx = (random byte between 0 and 255) & NN
  */
 static void op_C(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -265,9 +362,9 @@ static void op_C(Chip8 *chip, uint16_t opcode) {
 /**
  * DXYN - DRW Vx, Vy, nibble
  * --------------------------------------------------
- * Draw N-byte sprite starting at memory location I at coordinate (Vx, Vy)[cite: 1].
- * Screen pixels are XORed with the sprite bits[cite: 1].
- * VF is set to 1 if any existing screen pixels are erased, else 0[cite: 1].
+ * Draw N-byte sprite starting at memory location I at coordinate (Vx, Vy).
+ * Screen pixels are XORed with the sprite bits.
+ * VF is set to 1 if any existing screen pixels are erased, else 0.
  */
 static void op_D(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -278,8 +375,8 @@ static void op_D(Chip8 *chip, uint16_t opcode) {
 /**
  * EXNN - Keyboard conditionals
  * --------------------------------------------------
- * EX9E: SKP  Vx -> Skip next instruction if key in Vx is pressed[cite: 1]
- * EXA1: SKNP Vx -> Skip next instruction if key in Vx is NOT pressed[cite: 1]
+ * EX9E: SKP  Vx -> Skip next instruction if key in Vx is pressed
+ * EXA1: SKNP Vx -> Skip next instruction if key in Vx is NOT pressed
  */
 static void op_E(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
@@ -290,15 +387,15 @@ static void op_E(Chip8 *chip, uint16_t opcode) {
 /**
  * FXNN - Timers, Memory, and BCD utilities
  * --------------------------------------------------
- * FX07: LD Vx, DT     -> Vx = delay_timer[cite: 1]
- * FX0A: LD Vx, K      -> Wait for key press and store its value in Vx[cite: 1]
- * FX15: LD DT, Vx     -> delay_timer = Vx[cite: 1]
- * FX18: LD ST, Vx     -> sound_timer = Vx[cite: 1]
- * FX1E: ADD I, Vx     -> I = I + Vx[cite: 1]
- * FX29: LD F, Vx      -> I = address of 5-byte font sprite for hexadecimal digit Vx[cite: 1]
- * FX33: LD B, Vx      -> Store BCD representation of Vx at memory[I..I+2][cite: 1]
- * FX55: LD [I], Vx    -> Store registers V0 through Vx in memory starting at address I[cite: 1]
- * FX65: LD Vx, [I]    -> Read registers V0 through Vx from memory starting at address I[cite: 1]
+ * FX07: LD Vx, DT     -> Vx = delay_timer
+ * FX0A: LD Vx, K      -> Wait for key press and store its value in Vx
+ * FX15: LD DT, Vx     -> delay_timer = Vx
+ * FX18: LD ST, Vx     -> sound_timer = Vx
+ * FX1E: ADD I, Vx     -> I = I + Vx
+ * FX29: LD F, Vx      -> I = address of 5-byte font sprite for hexadecimal digit Vx
+ * FX33: LD B, Vx      -> Store BCD representation of Vx at memory[I..I+2]
+ * FX55: LD [I], Vx    -> Store registers V0 through Vx in memory starting at address I
+ * FX65: LD Vx, [I]    -> Read registers V0 through Vx from memory starting at address I
  */
 static void op_F(Chip8 *chip, uint16_t opcode) {
 	(void)chip;
