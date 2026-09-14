@@ -4,6 +4,7 @@
 #include "chip8.h"
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 const uint8_t chip8_fontset[80] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -32,7 +33,8 @@ void chip8_init(Chip8 *chip){
 }
 
 void chip8_load(Chip8 *chip, const uint8_t *program, size_t size){
-    return;
+  assert(size <= (4096 - 0x200));
+  memcpy(&chip->memory[0x200], program, size);
 }
 
 void chip8_cycle(Chip8 *chip){

@@ -28,7 +28,7 @@ extern const uint8_t chip8_fontset[80];
 
 // Fully initializes a chip given a pointer to assign it to.
 void chip8_init(Chip8 *chip);
-// Loads a program into the chip memory
+// Loads a program into the chip memory of a specific length
 void chip8_load(Chip8 *chip, const uint8_t *program, size_t size);
 // Advances a cycle of execution
 void chip8_cycle(Chip8 *chip);
