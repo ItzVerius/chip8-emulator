@@ -178,9 +178,9 @@ static void op_unknown(Chip8 *chip, uint16_t opcode){
         fprintf(stderr, "Want to dump system information? [Y/N]\t");
         scanf(" %c", &opt);
         opt = toupper(opt);
-    }while(opt != 'Y' | opt != 'N');
+    }while(opt != 'Y' || opt != 'N');
     if(opt == 'Y'){
-        char *dumpfile_name;
+        char *dumpfile_name = 0;
         fprintf(stderr, "\nInsert name of file to dump into: (leave empty for stderr)\t");
         scanf("%s", dumpfile_name);
         if(strcmp(dumpfile_name, "")){
