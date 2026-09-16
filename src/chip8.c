@@ -34,14 +34,15 @@
 #define OP_Y(x)                 (((x) >> 4) & 0x000F)
 
 #define STACKSIZE 16
-#define KILOBYTES(x) ((x)*1024)
-#define MEMORYSIZE KILOBYTES(4)
-#define CHIP8_REGCOUNT 16
-#define CHIP8_KEYCOUNT 16
-#define FONTSET_START 0x50
-#define PROGRAM_START 0x200
-#define PIXEL_ON 0xFFFFFFFF
-#define PIXEL_OFF 0x000000FF
+#define KILOBYTES(x)    ((x)*1024)
+#define BYTES(x)        ((x)*8)
+#define MEMORYSIZE      KILOBYTES(4)
+#define CHIP8_REGCOUNT  16
+#define CHIP8_KEYCOUNT  16
+#define FONTSET_START   0x50
+#define PROGRAM_START   0x200
+#define PIXEL_ON        0xFFFFFFFF
+#define PIXEL_OFF       0x000000FF
 
 const uint8_t chip8_fontset[80] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -354,7 +355,6 @@ static void op_0(Chip8 *chip, uint16_t opcode) {
 
 		default:
 		    op_unknown(chip, opcode);
-		    break;
 	}
 }
 
@@ -520,7 +520,6 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
 
         default:
             op_unknown(chip, opcode);
-            break;
     }
 }
 
@@ -589,8 +588,25 @@ static void op_D(Chip8 *chip, uint16_t opcode) {
  * EXA1: SKNP Vx -> Skip next instruction if key in Vx is NOT pressed
  */
 static void op_E(Chip8 *chip, uint16_t opcode) {
-	// TODO
-	return;
+	uint8_t pos = OP_X(opcode);
+	uint16_t key_mask = (uint16_t)1 << pos;
+	switch (OP_LOW_BYTE(opcode)) {
+	    case(0x9E): {
+			if(chip->keypad & key_mask){
+			    pc_incr(chip);
+			}
+			break;
+		}
+		case(0xA1): {
+			if(!(chip->keypad & key_mask)){
+			    pc_incr(chip);
+			}
+		    break;
+		}
+		default: {
+		    op_unknown(chip, opcode);
+		}
+	}
 }
 
 /**
@@ -649,7 +665,10 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 		}
 
 	    case(0x33): {
-			// TODO
+			uint8_t Vx = get_V(chip, OP_X(opcode));
+			set_mem_byte(chip, chip->I, Vx/100);
+			set_mem_byte(chip, chip->I + BYTES(1), (Vx%100)/10);
+			set_mem_byte(chip, chip->I + BYTES(2), Vx%10);
 			break;
 		}
 
