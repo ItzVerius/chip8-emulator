@@ -3,7 +3,5 @@
 
 # Directorios y artefactos de compilación
 build/
+roms/
 *.o
-
-# Las roms que haya dentro de la carpeta
-roms/*.ch8
