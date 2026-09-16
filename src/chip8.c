@@ -65,6 +65,7 @@ const uint8_t chip8_fontset[80] = {
 
 // System representation
 struct Chip8{
+    bool crashed;                           // Flag active in case of reading unkown instruction.
     uint8_t memory[MEMORYSIZE];             // RAM available (4 KB)
     uint8_t V[CHIP8_REGCOUNT];              // 8 bit general purpose registers (except VF, used as a flag by some instructions)
     uint16_t I;                             // Register for memory addresses (only 12 lower bits used)
@@ -144,6 +145,7 @@ static inline void pc_incr(Chip8 *chip){
 Chip8* chip8_init(){
     Chip8* chip = calloc(1, sizeof(Chip8));
     if(!chip) return NULL;
+    chip->crashed = false;
     pc_set(chip, PROGRAM_START);
     memcpy(get_mem_pointer(chip, FONTSET_START), chip8_fontset, sizeof(chip8_fontset));
     chip->keypad = chip->prev_keypad = 0x0000;
@@ -151,28 +153,32 @@ Chip8* chip8_init(){
     return chip;
 }
 
+bool chip8_crashed(Chip8 *chip){
+    return chip->crashed;
+}
+
 bool chip8_get_pixelstate(Chip8 *chip, size_t n){
     uint64_t row = chip->screen[n / 64];
-    
+
     // Right shift until reaching desired bit, and removing the rest to the left
     return (bool)((row >> (CHIP8_WIDTH-1 - (n % 64))) & 0x01);
 }
 
 void chip8_set_pixelstate(Chip8 *chip, size_t i, bool value){
     assert(i < CHIP8_PIXELCOUNT);
-    
+
     // Get which row the pixel is in
     size_t row = i / 64;
-    
+
     // Get its position
     size_t pos = CHIP8_WIDTH-1 - (i % CHIP8_WIDTH);
-    
+
     // Select said bit
     uint64_t mask = (uint64_t)1 << pos;
-    
+
     // Make it 0
     chip->screen[row] &= ~(mask);
-    
+
     if(value){
         // If pixel must be 1, insert it.
         chip->screen[row] |= mask;
@@ -192,16 +198,16 @@ void chip8_notify_keypad_state(Chip8 *chip, size_t i, bool ispressed){
 
     // Save actual keypad state as previous one
     chip->prev_keypad = chip->keypad;
-    
+
     // Calculate which bit starting from the end is the one we want
     size_t pos = CHIP8_KEYCOUNT-1 - i;
-    
+
     // Select said bit
     uint16_t mask = (uint16_t)1 << pos;
-    
-    // Make it 0 
+
+    // Make it 0
     chip->keypad &= ~(mask);
-    
+
     if(ispressed){
         // If key is pressed, insert 1
         chip->keypad |= mask;
@@ -227,6 +233,7 @@ void chip8_load(Chip8 *chip, const uint8_t *program, size_t size){
 
 void chip8_cycle(Chip8 *chip){
     assert(chip);
+    if (chip->crashed) return;
     /* Fetch instruction from memory */
     uint16_t opcode = get_mem_byte(chip, chip->pc);
     opcode = opcode << 8 | get_mem_byte(chip, chip->pc + 1);
@@ -306,6 +313,7 @@ void chip8_destroy(Chip8 *chip) {
  * In case we find an unknown opcode, for debugging purposes.
  */
 static void op_unknown(Chip8 *chip, uint16_t opcode){
+    chip->crashed = true;
     fprintf(stderr, "\n[ERROR] Unknown opcode: 0x%04X at PC: 0x%04X\n",
         opcode, chip->pc - 2);
     char opt;
@@ -313,22 +321,24 @@ static void op_unknown(Chip8 *chip, uint16_t opcode){
         fprintf(stderr, "Want to dump system information? [Y/N]\t");
         scanf(" %c", &opt);
         opt = toupper(opt);
-    }while(opt != 'Y' || opt != 'N');
+    }while(opt != 'Y' && opt != 'N');
     if(opt == 'Y'){
         char dumpfile_name[128] = {0};
         fprintf(stderr, "\nInsert name of file to dump into: (leave empty for stderr)\t");
-        scanf("%s", dumpfile_name);
-        if(strcmp(dumpfile_name, "")){
+        scanf(" %s", dumpfile_name);
+        if(strcmp(dumpfile_name, "") == 0){
             dump_chip_status(stderr, chip);
         } else {
             FILE *dumpfile = fopen(dumpfile_name, "w");
             if (!dumpfile){
                 perror("Error creating file to dump into.");
-                return;
+                dump_chip_status(stderr, chip);
+                exit(EXIT_FAILURE);
             }
             dump_chip_status(dumpfile, chip);
         }
     }
+    exit(EXIT_FAILURE);
 }
 
 /**
@@ -634,7 +644,7 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 			    chip->pc -= 2;
 				return;
 			}
-			
+
 			for (size_t k = 0; k < CHIP8_KEYCOUNT; k++) {
                 size_t pos = CHIP8_KEYCOUNT - 1 - k;
                 if (!((chip->keypad >> pos) & (chip->prev_keypad >> pos))) {
@@ -642,6 +652,7 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
                     break;
                 }
 			}
+			break;
 		}
 
 	    case(0x15): {

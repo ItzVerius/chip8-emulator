@@ -12,7 +12,7 @@ LDFLAGS = -static -flto -Wl,--gc-sections -s $(SDL_LIB) \
           -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 \
           -lversion -luuid -lsetupapi -ldxguid
 
-TARGET = chip8.exe
+TARGET = chip8_emu.exe
 SRCS = src/main.c src/chip8.c
 OBJS = $(SRCS:.c=.o)
 
