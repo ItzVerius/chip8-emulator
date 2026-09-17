@@ -189,6 +189,10 @@ bool chip8_get_drawflag(Chip8 *chip){
     return chip->draw_flag;
 }
 
+bool chip8_get_soundflag(Chip8 *chip){
+    return chip->sound_play;
+}
+
 void chip8_end_draw(Chip8 *chip){
     chip->draw_flag = false;
 }
@@ -587,8 +591,32 @@ static void op_C(Chip8 *chip, uint16_t opcode) {
  * VF is set to 1 if any existing screen pixels are erased, else 0.
  */
 static void op_D(Chip8 *chip, uint16_t opcode) {
-	// TODO
-	return;
+    uint8_t Vx = get_V(chip, OP_X(opcode)) % CHIP8_WIDTH;
+    uint8_t Vy = get_V(chip, OP_Y(opcode)) % CHIP8_HEIGHT;
+    uint8_t sprite_height = OP_NIBBLE(opcode);
+    // Collision flag set to 0
+    set_V(chip, 0xF, 0);
+    for(size_t i = 0; i < sprite_height; i++){
+        // Get each row of the sprite
+        uint8_t sprite_row = get_mem_byte(chip, chip->I + i);
+        
+        // Shift it to where it is needed horizontally
+        uint64_t row = ((uint64_t)sprite_row << (CHIP8_WIDTH - 8)) >> Vx;
+
+        // If calculated row to draw on is out of bounds do nothing
+        size_t screen_y = (Vy + i);
+        if (screen_y >= CHIP8_HEIGHT) break;
+
+        // If collision with XOR detected, set flag to 1
+        if (chip->screen[screen_y] & row) {
+            set_V(chip, 0xF, 1);
+        }
+        
+        // Place into the screen appropiate vertical coordinate
+        chip->screen[screen_y] ^= row;
+    }
+    // Indicate need for rendering
+    chip->draw_flag = true;
 }
 
 /**
@@ -598,8 +626,11 @@ static void op_D(Chip8 *chip, uint16_t opcode) {
  * EXA1: SKNP Vx -> Skip next instruction if key in Vx is NOT pressed
  */
 static void op_E(Chip8 *chip, uint16_t opcode) {
-	uint8_t pos = OP_X(opcode);
-	uint16_t key_mask = (uint16_t)1 << pos;
+	uint8_t key = get_V(chip, OP_X(opcode));
+	if(key >= CHIP8_KEYCOUNT){
+	    return;
+	}
+	uint16_t key_mask = (uint16_t)1 << (CHIP8_KEYCOUNT - 1 - key);
 	switch (OP_LOW_BYTE(opcode)) {
 	    case(0x9E): {
 			if(chip->keypad & key_mask){
@@ -640,18 +671,25 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 		}
 
 	    case(0x0A): {
+			// If no key pressed, wait
 			if(chip->keypad == 0){
 			    chip->pc -= 2;
 				return;
 			}
 
+			// If some key pressed, check wether it already was
 			for (size_t k = 0; k < CHIP8_KEYCOUNT; k++) {
                 size_t pos = CHIP8_KEYCOUNT - 1 - k;
-                if (!((chip->keypad >> pos) & (chip->prev_keypad >> pos))) {
+                bool pressed_now = (chip->keypad >> pos) & 1;
+                bool pressed_before = (chip->prev_keypad >> pos) & 1;
+                // If it wasnt, store it
+                if (pressed_now && !pressed_before) {
                     set_V(chip, OP_X(opcode), (uint8_t)k);
-                    break;
+                    return;
                 }
 			}
+			// If every key was in the same state as before, wait
+			chip->pc -= 2;
 			break;
 		}
 
@@ -678,8 +716,8 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 	    case(0x33): {
 			uint8_t Vx = get_V(chip, OP_X(opcode));
 			set_mem_byte(chip, chip->I, Vx/100);
-			set_mem_byte(chip, chip->I + BYTES(1), (Vx%100)/10);
-			set_mem_byte(chip, chip->I + BYTES(2), Vx%10);
+			set_mem_byte(chip, chip->I + 1, (Vx%100)/10);
+			set_mem_byte(chip, chip->I + 2, Vx%10);
 			break;
 		}
 
