@@ -398,7 +398,7 @@ static void op_2(Chip8 *chip, uint16_t opcode) {
  */
 static void op_3(Chip8 *chip, uint16_t opcode) {
 	uint8_t nn = OP_LOW_BYTE(opcode);
-	uint8_t Vx = OP_X(opcode);
+	uint8_t Vx = get_V(chip, OP_X(opcode));
 	if (nn == Vx){
 	    pc_incr(chip);
 	}
@@ -411,7 +411,7 @@ static void op_3(Chip8 *chip, uint16_t opcode) {
  */
 static void op_4(Chip8 *chip, uint16_t opcode) {
     uint8_t nn = OP_LOW_BYTE(opcode);
-	uint8_t Vx = OP_X(opcode);
+	uint8_t Vx = get_V(chip, OP_X(opcode));
 	if (nn != Vx){
 	    pc_incr(chip);
 	}
@@ -498,7 +498,8 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
 
         case(0x5): {
             uint8_t ox = OP_X(opcode);
-            uint8_t Vy = get_V(chip, OP_Y(opcode));
+            uint8_t oy = OP_Y(opcode);
+            uint8_t Vy = get_V(chip, oy);
             uint8_t Vx = get_V(chip, ox);
             uint8_t flag = (Vx >= Vy) ? 1 : 0;
             set_V(chip, ox, Vx - Vy);
@@ -517,7 +518,8 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
 
         case(0x7): {
             uint8_t ox = OP_X(opcode);
-            uint8_t Vy = get_V(chip, OP_Y(opcode));
+            uint8_t oy = OP_Y(opcode);
+            uint8_t Vy = get_V(chip, oy);
             uint8_t Vx = get_V(chip, ox);
             uint8_t flag = (Vy >= Vx) ? 1 : 0;
             set_V(chip, ox, Vy - Vx);
