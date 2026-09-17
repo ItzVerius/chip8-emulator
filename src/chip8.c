@@ -200,25 +200,23 @@ void chip8_end_draw(Chip8 *chip){
 void chip8_notify_keypad_state(Chip8 *chip, size_t i, bool ispressed){
     assert(i < CHIP8_KEYCOUNT);
 
-    // Save actual keypad state as previous one
-    chip->prev_keypad = chip->keypad;
-
     // Calculate which bit starting from the end is the one we want
-    size_t pos = CHIP8_KEYCOUNT-1 - i;
+    size_t pos = CHIP8_KEYCOUNT - 1 - i;
 
     // Select said bit
     uint16_t mask = (uint16_t)1 << pos;
 
-    // Make it 0
-    chip->keypad &= ~(mask);
-
-    if(ispressed){
-        // If key is pressed, insert 1
-        chip->keypad |= mask;
+    if (ispressed) {
+        chip->keypad |= mask;   // Add it
+    } else {
+        chip->keypad &= ~mask;  // Remove it
     }
 }
 
-void chip8_update_timers(Chip8 *chip) {
+void chip8_on_frame_update(Chip8 *chip) {
+    // Save actual keypad state as previous one
+    chip->prev_keypad = chip->keypad;
+
     if (chip->delay_timer > 0) {
         chip->delay_timer--;
     }
@@ -361,6 +359,7 @@ static void op_0(Chip8 *chip, uint16_t opcode) {
 			for(size_t i = 0; i < sizeof(chip->screen)/sizeof(chip->screen[0]); i++){
 			    chip->screen[i] = 0;
 			};
+			chip->draw_flag = true;
 			break;
 
 		case(0x00EE):
@@ -423,11 +422,15 @@ static void op_4(Chip8 *chip, uint16_t opcode) {
  * Skip next instruction if Vx == Vy:
  */
 static void op_5(Chip8 *chip, uint16_t opcode) {
-    uint8_t Vy = OP_Y(opcode);
-	uint8_t Vx = OP_X(opcode);
-	if (Vy == Vx){
-	    pc_incr(chip);
-	}
+    if (OP_NIBBLE(opcode) == 0x0) {
+        uint8_t vx = get_V(chip, OP_X(opcode));
+        uint8_t vy = get_V(chip, OP_Y(opcode));
+        if (vx == vy) {
+            pc_incr(chip);
+        }
+    } else {
+        op_unknown(chip, opcode);
+    }
 }
 
 /**
@@ -454,9 +457,9 @@ static void op_7(Chip8 *chip, uint16_t opcode) {
  * 8XYN - Arithmetic and Logical operations
  * --------------------------------------------------
  * 8XY0: LD   Vx, Vy        -> Vx = Vy
- * 8XY1: OR   Vx, Vy        -> Vx = Vx | Vy
- * 8XY2: AND  Vx, Vy        -> Vx = Vx & Vy
- * 8XY3: XOR  Vx, Vy        -> Vx = Vx ^ Vy
+ * 8XY1: OR   Vx, Vy        -> Vx = Vx | Vy; VF = 0
+ * 8XY2: AND  Vx, Vy        -> Vx = Vx & Vy; VF = 0
+ * 8XY3: XOR  Vx, Vy        -> Vx = Vx ^ Vy; VF = 0
  * 8XY4: ADD  Vx, Vy        -> Vx = Vx + Vy; VF = carry
  * 8XY5: SUB  Vx, Vy        -> Vx = Vx - Vy; VF = NOT borrow (1 if Vx > Vy, else 0)
  * 8XY6: SHR  Vx, Vy        -> Vx = Vy >> 1; VF = least-significant bit before shift
@@ -474,15 +477,18 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
 
         case(0x1): {
             chip->V[OP_X(opcode)] |= chip->V[OP_Y(opcode)];
+            set_V(chip, 0xF, 0);
             break;
         }
         case(0x2): {
             chip->V[OP_X(opcode)] &= chip->V[OP_Y(opcode)];
+            set_V(chip, 0xF, 0);
             break;
         }
 
         case(0x3): {
             chip->V[OP_X(opcode)] ^= chip->V[OP_Y(opcode)];
+            set_V(chip, 0xF, 0);
             break;
         }
 
@@ -535,7 +541,7 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
             set_V(chip, 0xF, flag);
             break;
         }
-        
+
         default:
             op_unknown(chip, opcode);
     }
@@ -658,7 +664,7 @@ static void op_E(Chip8 *chip, uint16_t opcode) {
  * FXNN - Timers, Memory, and BCD utilities
  * --------------------------------------------------
  * FX07: LD Vx, DT     -> Vx = delay_timer
- * FX0A: LD Vx, K      -> Wait for key press and store its value in Vx
+ * FX0A: LD Vx, K      -> Wait for key press (and release) and store its value in Vx
  * FX15: LD DT, Vx     -> delay_timer = Vx
  * FX18: LD ST, Vx     -> sound_timer = Vx
  * FX1E: ADD I, Vx     -> I = I + Vx
@@ -675,26 +681,24 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 		}
 
 	    case(0x0A): {
-			// If no key pressed, wait
-			if(chip->keypad == 0){
-			    chip->pc -= 2;
-				return;
-			}
-
-			// If some key pressed, check wether it already was
-			for (size_t k = 0; k < CHIP8_KEYCOUNT; k++) {
+			bool key_detected = false;
+            for (size_t k = 0; k < CHIP8_KEYCOUNT; k++) {
                 size_t pos = CHIP8_KEYCOUNT - 1 - k;
                 bool pressed_now = (chip->keypad >> pos) & 1;
                 bool pressed_before = (chip->prev_keypad >> pos) & 1;
-                // If it wasnt, store it
+
                 if (pressed_now && !pressed_before) {
                     set_V(chip, OP_X(opcode), (uint8_t)k);
-                    return;
+                    key_detected = true;
+                    break;
                 }
-			}
-			// If every key was in the same state as before, wait
-			chip->pc -= 2;
-			break;
+            }
+
+            // If no key is pressed revert PC
+            if (!key_detected) {
+                chip->pc -= 2;
+            }
+            break;
 		}
 
 	    case(0x15): {
@@ -727,14 +731,14 @@ static void op_F(Chip8 *chip, uint16_t opcode) {
 
 	    case(0x55): {
 			for(size_t i = 0; i <= OP_X(opcode); i++){
-			    set_mem_byte(chip, chip->I + i, get_V(chip, i));
+			    set_mem_byte(chip, chip->I++, get_V(chip, i));
 			}
 			break;
 		}
 
 	    case(0x65): {
 			for(size_t i = 0; i <= OP_X(opcode); i++){
-			    set_V(chip, i, get_mem_byte(chip, chip->I + i));
+			    set_V(chip, i, get_mem_byte(chip, chip->I++));
 			}
 			break;
 		}

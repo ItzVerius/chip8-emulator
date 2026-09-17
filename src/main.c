@@ -6,15 +6,27 @@
 #include "SDL3/SDL_timer.h"
 #include "chip8.h"
 
-#define WINDOW_WIDTH   640
-#define WINDOW_HEIGHT  320
+#define WINDOW_WIDTH   1280
+#define WINDOW_HEIGHT  640
 #define FPS 60
 
 static const SDL_Keycode KEYMAP[16] = {
-    SDLK_1, SDLK_2, SDLK_3, SDLK_4, // 1, 2, 3, 4
-    SDLK_Q, SDLK_W, SDLK_E, SDLK_R, // q, w, e, r
-    SDLK_A, SDLK_S, SDLK_D, SDLK_F, // a, s, d, f
-    SDLK_Z, SDLK_X, SDLK_C, SDLK_V  // z, x, c, v
+    SDLK_X, // 0            1   2   3   C
+    SDLK_1, // 1            4   5   6   D
+    SDLK_2, // 2            7   8   9   E
+    SDLK_3, // 3            A   0   B   F
+    SDLK_Q, // 4
+    SDLK_W, // 5               goes to
+    SDLK_E, // 6
+    SDLK_A, // 7            1   2   3   4
+    SDLK_S, // 8            q   w   e   r
+    SDLK_D, // 9            a   s   d   f
+    SDLK_Z, // A            z   x   c   v
+    SDLK_C, // B
+    SDLK_4, // C
+    SDLK_R, // D            quite confusing
+    SDLK_F, // E
+    SDLK_V  // F
 };
 
 int main(int argc, char* argv[]) {
@@ -29,9 +41,11 @@ int main(int argc, char* argv[]) {
     bool running = true;
     SDL_Event event;
 
-    char roms_route[256];
-    printf("Specify route to your Chip8 programs:\t");
-    scanf(" %s", roms_route);
+    //char roms_route[256];
+    //printf("Specify route to your Chip8 programs:\t");
+    //scanf(" %s", roms_route);
+
+    char *roms_route = "./roms";
     
     printf("Reading roms from directory, select which one you want to run by number:\n");
 
@@ -128,6 +142,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    SDL_RaiseWindow(window);
+    
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
                                                 SDL_TEXTUREACCESS_STREAMING,
                                                 CHIP8_WIDTH, CHIP8_HEIGHT);
@@ -156,7 +172,7 @@ int main(int argc, char* argv[]) {
     
     while (running) {
         Uint64 time = SDL_GetTicks();
-        chip8_update_timers(chip);
+        chip8_on_frame_update(chip);
 
         // Audio checking and playing
         if (audio_stream) {
@@ -200,11 +216,18 @@ int main(int argc, char* argv[]) {
 
         // 10 times every frame at 60fps = 600Hz
         for (int i = 0; i < 10; i++) {
+
             chip8_cycle(chip);
+
             if(chip8_crashed(chip)){
                 running = false;
                 break;
             }
+
+            // Only one sprite was rendered each frame in the past
+            //if(chip8_get_drawflag(chip)){
+            //    break;
+            //}
         }
 
         // Only update if there's some update the GPU needs to render

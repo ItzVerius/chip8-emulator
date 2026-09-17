@@ -32,8 +32,8 @@ bool chip8_get_soundflag(Chip8 *chip);
 void chip8_end_draw(Chip8 *chip);
 // Notify the chip wether a certain key is pressed or not
 void chip8_notify_keypad_state(Chip8 *chip, size_t i, bool ispressed);
-// Decrement timer call, to be executed 60 times each second.
-void chip8_update_timers(Chip8 *chip);
+// Decrement timer call and save previous keyboard state, to be executed 60 times each second.
+void chip8_on_frame_update(Chip8 *chip);
 // Loads a program into the chip memory of a specific length
 void chip8_load(Chip8 *chip, const uint8_t *program, size_t size);
 // Advances a cycle of execution
