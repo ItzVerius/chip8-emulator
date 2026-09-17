@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
         closedir(roms_dir);
         
         if(rom_count == 0){
-            fprintf(stderr, "No se encontraron archivos .ch8 en: %s\n", roms_route);
+            fprintf(stderr, "Couldnt find .ch8 files in: %s\n", roms_route);
             running = false;
         } else {
             int option;
@@ -116,7 +116,7 @@ int main(int argc, char* argv[]) {
     
     // Initialize SDL3
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
-        printf("Error inicializando SDL: %s\n", SDL_GetError());
+        printf("Error initializing SDL: %s\n", SDL_GetError());
         return 1;
     }
     
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     );
     
     if (!audio_stream) {
-        fprintf(stderr, "Aviso: No se pudo abrir el stream de audio: %s\n", SDL_GetError());
+        fprintf(stderr, "Warning: Couldnt open audio stream: %s\n", SDL_GetError());
     } else {
         SDL_ResumeAudioStreamDevice(audio_stream);
     }

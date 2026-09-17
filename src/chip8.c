@@ -459,9 +459,9 @@ static void op_7(Chip8 *chip, uint16_t opcode) {
  * 8XY3: XOR  Vx, Vy        -> Vx = Vx ^ Vy
  * 8XY4: ADD  Vx, Vy        -> Vx = Vx + Vy; VF = carry
  * 8XY5: SUB  Vx, Vy        -> Vx = Vx - Vy; VF = NOT borrow (1 if Vx > Vy, else 0)
- * 8XY6: SHR  Vx {, Vy}     -> Vx = Vx >> 1; VF = least-significant bit before shift
+ * 8XY6: SHR  Vx, Vy        -> Vx = Vy >> 1; VF = least-significant bit before shift
  * 8XY7: SUBN Vx, Vy        -> Vx = Vy - Vx; VF = NOT borrow (1 if Vy > Vx, else 0)
- * 8XYE: SHL  Vx {, Vy}     -> Vx = Vx << 1; VF = most-significant bit before shift
+ * 8XYE: SHL  Vx, Vy        -> Vx = Vy << 1; VF = most-significant bit before shift
  */
 static void op_8(Chip8 *chip, uint16_t opcode) {
     switch(OP_NIBBLE(opcode)){
@@ -500,17 +500,18 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
             uint8_t ox = OP_X(opcode);
             uint8_t Vy = get_V(chip, OP_Y(opcode));
             uint8_t Vx = get_V(chip, ox);
-            uint16_t sub = Vx - Vy;
-            set_V(chip, ox, (uint8_t)(sub));
-            set_V(chip, 0xF, (Vx >= Vy) ? 1 : 0);
+            uint8_t flag = (Vx >= Vy) ? 1 : 0;
+            set_V(chip, ox, Vx - Vy);
+            set_V(chip, 0xF, flag);
             break;
         }
 
         case(0x6): {
             uint8_t ox = OP_X(opcode);
-            uint8_t Vx = get_V(chip, ox);
-            set_V(chip, 0xF, Vx & 0x1);
-            set_V(chip, ox, Vx >> 1);
+            uint8_t Vy = get_V(chip, OP_Y(opcode));
+            uint8_t flag = Vy & 0x1;
+            set_V(chip, ox, Vy >> 1);
+            set_V(chip, 0xF, flag);
             break;
         }
 
@@ -518,20 +519,21 @@ static void op_8(Chip8 *chip, uint16_t opcode) {
             uint8_t ox = OP_X(opcode);
             uint8_t Vy = get_V(chip, OP_Y(opcode));
             uint8_t Vx = get_V(chip, ox);
-            uint16_t sub = Vy - Vx;
-            set_V(chip, ox, (uint8_t)(sub));
-            set_V(chip, 0xF, (Vy >= Vx) ? 1 : 0);
+            uint8_t flag = (Vy >= Vx) ? 1 : 0;
+            set_V(chip, ox, Vy - Vx);
+            set_V(chip, 0xF, flag);
             break;
         }
 
         case(0xE): {
             uint8_t ox = OP_X(opcode);
-            uint8_t Vx = get_V(chip, ox);
-            set_V(chip, 0xF, (uint8_t)(Vx & 0x80) >> 7);
-            set_V(chip, ox, Vx << 1);
+            uint8_t val = get_V(chip, OP_Y(opcode));
+            uint8_t flag = (val & 0x80) >> 7;
+            set_V(chip, ox, val << 1);
+            set_V(chip, 0xF, flag);
             break;
         }
-
+        
         default:
             op_unknown(chip, opcode);
     }
@@ -599,7 +601,7 @@ static void op_D(Chip8 *chip, uint16_t opcode) {
     for(size_t i = 0; i < sprite_height; i++){
         // Get each row of the sprite
         uint8_t sprite_row = get_mem_byte(chip, chip->I + i);
-        
+
         // Shift it to where it is needed horizontally
         uint64_t row = ((uint64_t)sprite_row << (CHIP8_WIDTH - 8)) >> Vx;
 
@@ -611,7 +613,7 @@ static void op_D(Chip8 *chip, uint16_t opcode) {
         if (chip->screen[screen_y] & row) {
             set_V(chip, 0xF, 1);
         }
-        
+
         // Place into the screen appropiate vertical coordinate
         chip->screen[screen_y] ^= row;
     }
