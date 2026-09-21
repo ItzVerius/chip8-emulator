@@ -1,14 +1,29 @@
+#ifdef _WIN32
+    #include <conio.h>
+    #include <windows.h>
+#else
+    #include <stdio.h>
+    #include <unistd.h>
+    #include <termios.h>
+#endif
+
 #include <SDL3/SDL.h>
-#include <stdio.h>
+#include <SDL3/SDL_dialog.h>
 #include <stdbool.h>
 #include <dirent.h>
 #include "SDL3/SDL_init.h"
 #include "SDL3/SDL_timer.h"
 #include "chip8.h"
 
+
 #define WINDOW_WIDTH   1280
 #define WINDOW_HEIGHT  640
 #define FPS 60
+
+#define KEY_UP 1000
+#define KEY_DOWN 1001
+#define KEY_ENTER 1002
+#define KEY_UNKNOWN 1003
 
 static const SDL_Keycode KEYMAP[16] = {
     SDLK_X, // 0            1   2   3   C
@@ -29,27 +44,63 @@ static const SDL_Keycode KEYMAP[16] = {
     SDLK_V  // F
 };
 
+int get_keypress(void) {
+#ifdef _WIN32
+    int ch = _getch();
+    if (ch == 0 || ch == 224) {
+        ch = _getch();
+        if (ch == 72) return KEY_UP;
+        if (ch == 80) return KEY_DOWN;
+        return KEY_UNKNOWN;
+    }
+    if (ch == 13) return KEY_ENTER;
+    return ch;
+#else
+    struct termios oldt, newt;
+    int ch;
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    ch = getchar();
+    if (ch == 27) {
+        if (getchar() == '[') {
+            ch = getchar();
+            if (ch == 'A') ch = KEY_UP;
+            else if (ch == 'B') ch = KEY_DOWN;
+            else ch = KEY_UNKNOWN;
+        }
+    } else if (ch == '\n') {
+        ch = KEY_ENTER;
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    return ch;
+#endif
+}
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
 
+    // Initialize SDL3
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+        printf("Error initializing SDL: %s\n", SDL_GetError());
+        printf("Press ENTER to exit.\n");
+        getchar();
+        return 1;
+    }
+
     // Chip configuration (initialize, select rom, etc...)
+    SDL_Event event;
+    bool running = true;
+    Chip8 *chip = chip8_init();
     uint32_t pixel_buffer[CHIP8_PIXELCOUNT] = {0};
 
-    Chip8 *chip = chip8_init();
-
-    bool running = true;
-    SDL_Event event;
-
-    //char roms_route[256];
-    //printf("Specify route to your Chip8 programs:\t");
-    //scanf(" %s", roms_route);
-
-    char *roms_route = "./roms";
-    
     printf("Reading roms from directory, select which one you want to run by number:\n");
 
-    DIR *roms_dir = opendir(roms_route);
+    char *rom_folder = "./roms";
+
+    DIR *roms_dir = opendir(rom_folder);
     if (!roms_dir){
         perror("Couldn't open roms directory.");
         running = false;
@@ -68,7 +119,6 @@ int main(int argc, char* argv[]) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcmp(ext, ".ch8") == 0) {
                 printf("\t%d) %s\n", (int)index++, entry->d_name);
-
                 rom_list = realloc(rom_list, sizeof(char*) * (rom_count + 1));
                 rom_list[rom_count] = strdup(entry->d_name);
                 rom_count++;
@@ -76,34 +126,65 @@ int main(int argc, char* argv[]) {
         }
 
         closedir(roms_dir);
-        
+
         if(rom_count == 0){
-            fprintf(stderr, "Couldnt find .ch8 files in: %s\n", roms_route);
+            fprintf(stderr, "Couldnt find .ch8 files in: %s\n", rom_folder);
             running = false;
         } else {
-            int option;
-            scanf(" %d", &option);
-            option -= 1;
+            #ifdef _WIN32
+                HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+                DWORD dwMode = 0;
+                GetConsoleMode(hOut, &dwMode);
+                dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+                SetConsoleMode(hOut, dwMode);
+            #endif
 
-            if(option < 0 || option > rom_count - 1){
-                running = false;
-            } else {
+            int current_selection = 0;
+            bool rom_selected = false;
+
+            while (!rom_selected && running) {
+                // \033[H\033[J clears screen and returns to beginning of terminal
+                printf("\033[H\033[J");
+                printf("=========================================\n");
+                printf("  CHIP-8 EMULATOR - SELECT A ROM BELOW   \n");
+                printf("     (Use arrows UP/DOWN and ENTER)      \n");
+                printf("=========================================\n\n");
+
+                for (int i = 0; i < rom_count; i++) {
+                    if (i == current_selection) {
+                        printf("\033[7m -> %s \033[0m\n", rom_list[i]); // Inverted background
+                    } else {
+                        printf("    %s \n", rom_list[i]);
+                    }
+                }
+
+                int key = get_keypress();
+
+                if (key == KEY_UP && current_selection > 0) {
+                    current_selection--;
+                } else if (key == KEY_DOWN && current_selection < rom_count - 1) {
+                    current_selection++;
+                } else if (key == KEY_ENTER) {
+                    rom_selected = true;
+                } else if (key == 27 || key == 'q' || key == 'Q') {
+                    running = false; // Escape or Q aborts
+                }
+            }
+
+            if (running) {
                 char full_path[512];
-                snprintf(full_path, sizeof(full_path), "%s/%s", roms_route, rom_list[option]);
+                snprintf(full_path, sizeof(full_path), "%s/%s", rom_folder, rom_list[current_selection]);
 
                 FILE *rom = fopen(full_path, "rb");
                 if (!rom) {
-                    perror("Couldn't open rom file.");
+                    perror("Couldn't open ROM file.");
                     running = false;
                 } else {
-                    // Measure file size
                     fseek(rom, 0, SEEK_END);
                     long rom_size = ftell(rom);
                     rewind(rom);
-                
-                    const size_t max_size = CHIP8_MAX_PROGRAM_SIZE;
-                
-                    if (rom_size <= 0 || (size_t)rom_size > max_size) {
+
+                    if (rom_size <= 0 || (size_t)rom_size > CHIP8_MAX_PROGRAM_SIZE) {
                         fprintf(stderr, "Invalid ROM size (%ld bytes).\n", rom_size);
                         running = false;
                     } else {
@@ -115,61 +196,61 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        
+
         for(int i = 0; i < rom_count; i++){
             free(rom_list[i]);
         }
         free(rom_list);
     }
 
+
     // Early return if something went wrong
     if (!running) {
         chip8_destroy(chip);
-        return 1;
-    }
-    
-    // Initialize SDL3
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
-        printf("Error initializing SDL: %s\n", SDL_GetError());
-        return 1;
-    }
-    
-    SDL_Window *window = NULL;
-    SDL_Renderer *renderer = NULL;
-    if (!SDL_CreateWindowAndRenderer("Chip-8 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT, 0, &window, &renderer)) {
-        fprintf(stderr, "Error creating window/renderer: %s\n", SDL_GetError());
         SDL_Quit();
+        printf("\nPress ENTER to exit...");
+        getchar();
         return 1;
     }
-    
-    SDL_RaiseWindow(window);
-    
+
+    SDL_Window *window = NULL;
+        SDL_Renderer *renderer = NULL;
+        if (!SDL_CreateWindowAndRenderer("Chip-8 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT, 0, &window, &renderer)) {
+            fprintf(stderr, "Error creating window/renderer: %s\n", SDL_GetError());
+            SDL_Quit();
+            return 1;
+        }
+
+        SDL_RaiseWindow(window);
+
+
+
     SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
                                                 SDL_TEXTUREACCESS_STREAMING,
                                                 CHIP8_WIDTH, CHIP8_HEIGHT);
-    
+
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    
+
     // Initialize sound
-    
+
     SDL_AudioSpec spec;
     spec.channels = 1;
     spec.format = SDL_AUDIO_F32;
     spec.freq = 44100;
-    
+
     SDL_AudioStream *audio_stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
         &spec,
         NULL,
         NULL
     );
-    
+
     if (!audio_stream) {
         fprintf(stderr, "Warning: Couldnt open audio stream: %s\n", SDL_GetError());
     } else {
         SDL_ResumeAudioStreamDevice(audio_stream);
     }
-    
+
     while (running) {
         Uint64 time = SDL_GetTicks();
         chip8_on_frame_update(chip);
@@ -244,6 +325,7 @@ int main(int argc, char* argv[]) {
 
             chip8_end_draw(chip);
         }
+
         Uint64 frame_time = SDL_GetTicks() - time;
         if (frame_time < (1000 / FPS)) {
             SDL_Delay((1000 / FPS) - frame_time);
